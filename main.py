@@ -5,7 +5,6 @@ import platform
 import argparse
 import time
 
-
 def fetch_properties(zip_code=None, home_type=None, page=1, status_type=None, min_price=None, max_price=None):
     url = "https://zillow-com1.p.rapidapi.com/propertyExtendedSearch"
 
@@ -114,6 +113,7 @@ def fetch_and_export_data(zip_code=None, max_price=None, home_type=None, status_
         zillow_fetch = fetch_properties(zip_code, home_type, page, status_type, 0, max_price)
         if 'props' in zillow_fetch:
             zillow_properties.extend(zillow_fetch['props'])
+            time.sleep(6)
         else:
             print(f"No data found in Zillow.com for page {page}.")
             break
@@ -121,17 +121,16 @@ def fetch_and_export_data(zip_code=None, max_price=None, home_type=None, status_
         realtor_fetch = fetch_properties_realtor(zip_code, home_type, page, status_type, 0, max_price)
         if 'data' in realtor_fetch:
             realtor_properties.extend(realtor_fetch['data'])
+            time.sleep(6)
         else:
             print(f"No data found in Realtor.com for page {page}.")
             break
-
         time.sleep(5)
-
-        if page >= 3:  # Stop if max pages reached
+        print(f'Page {page} fetched, moving on ...')
+        if page >= 20:  
             break
         page += 1
-        print(f'Page {num_pages} fetched, moving on ...')
-
+        time.sleep(5)
     if not zillow_properties:
         print("No Zillow data found for the given criteria.")
         return
@@ -139,61 +138,104 @@ def fetch_and_export_data(zip_code=None, max_price=None, home_type=None, status_
         print("No Realtor data found for the given criteria.")
         return
 
-    # Convert to DataFrame
     df_props = pd.DataFrame(zillow_properties)
-
+    df_props.dropna(subset=['price'])
+    df_props['zestimate'] = df_props.apply(
+    lambda row: row['price'] if pd.isna(row['zestimate']) else row['zestimate'],
+    axis=1
+)
     if 'dateSold' in df_props.columns:
         df_props['dateSold'] = pd.to_datetime(
             df_props['dateSold'], unit="ms").dt.strftime('%m/%d/%Y')
-
     if 'detailUrl' in df_props.columns:
         df_props['detailUrl'] = 'https://www.zillow.com' + \
             df_props['detailUrl']
 
     df_props = df_props[df_props['livingArea'].notna()]
 
+    # remove unwant field
     columns_to_remove = [
         "variableData", "priceChange", "contingentListingType",
         "longitude", "latitude", "listingSubType",
-        "currency", "hasImage", "newConstructionType", "lotAreaUnit", "lotAreaValue", "imgSrc"
+        "currency", "hasImage", "newConstructionType", "lotAreaUnit", "lotAreaValue", "imgSrc",
+        'zpid', 'listingStatus', 'country'
     ]
-
     df_props.drop(columns=columns_to_remove, inplace=True, errors='ignore')
 
+    # reorder Zillow Data 
     new_order = [
-        'dateSold', 'propertyType', 'address', 'bedrooms', 'bathrooms',
-        'livingArea', 'listingStatus', 'price',
-        'zestimate', 'rentZestimate', 'country', 'detailUrl', 'zpid'
-    ]
-
+        'dateSold', 'address', 'price', 'zestimate', 'rentZestimate', 'detailUrl', 
+        'bedrooms', 'bathrooms', 'livingArea', 'propertyType'
+        ]
     new_name_order = [
-        'Sold Date', 'Property Type', 'Address', 'Number of Bedrooms',
-        'Number of Bathrooms', 'Living Areas', 'Status',
-        'Sold Price', 'Zestimate Price', 'Zestimate Rent Price', 'Country',
-        'Website', 'Zillow ID'
-    ]
+        'Sold Date', 'Address', 'Sold Price', 'Zestimate Price', 'Zestimate Rent Price',
+        'Website', 'bedrooms', 'bathrooms', 'Living Area', 'Property Type'
+        ]
     df_props = df_props[new_order]
-
     df_props.rename(columns=dict(zip(new_order, new_name_order)), inplace=True)
-    df_props['Status'] = df_props['Status'].replace('RECENTLY_SOLD', 'SOLD')
-    print("Zillow.com data successfully fetched!")
-    
+
+    # handle date time
+    if '/' in str(df_props['Sold Date'].iloc[0]):
+        df_props['Sold Date'] = pd.to_datetime(df_props['Sold Date'], format='%m/%d/%Y', errors='coerce')
+    else:
+        df_props['Sold Date'] = pd.to_datetime(df_props['Sold Date'], unit='ms')
+    df_props['Sold Date'] = pd.to_datetime(df_props['Sold Date'], unit='ms').dt.strftime('%m/%d/%Y')
+
+    print("Zillow.com and Realtor.com successfully fetched!")
+    time.sleep(5)
+
+    # realtor API
     df_realtor = pd.DataFrame(realtor_properties)
-    print("Realtor.com data successfully fetched!")
+    def format_address(location):
+        address = location.get('address', '')
+        city = location.get('city', '')
+        state = location.get('state', '')
+        postal_code = location.get('postalCode', '')
+
+        formatted_address = f"{address}, {city}, {state} {postal_code}"
+        return formatted_address
+    
+    # format address 
+    df_realtor['formatted_address'] = df_realtor['location'].apply(format_address)
+    realtor_columns_to_remove = [
+    'propertyId', 'listingId', 'priceMin', 'priceMax', 'permalink', 'location'
+    ]
+    df_realtor.drop(columns=realtor_columns_to_remove, inplace=True, errors='ignore')
+
+    # rename 
+    new_realtor_order = [
+        'soldDate', 'formatted_address', 'price', 'url'
+        ]
+    new_realtor_name_order = [
+        'Sold Date', 'Address', 'Sold Price', 'Website'
+        ]
+    df_realtor = df_realtor[new_realtor_order]
+    df_realtor.rename(columns=dict(zip(new_realtor_order, new_realtor_name_order)), inplace=True)
+
+    # handle date time
+    df_realtor['Sold Date'] = pd.to_datetime(df_realtor['Sold Date'], format='%Y-%m-%d', errors='coerce')
+
+    if df_props['Sold Date'].dtype == 'O':
+        df_props['Sold Date'] = pd.to_datetime(df_props['Sold Date'], errors='coerce')
+        df_props.dropna(subset=['Sold Date'], inplace=True)
+        df_props['Sold Date'] = df_props['Sold Date'].dt.strftime('%m/%d/%Y')
+
+    if df_realtor['Sold Date'].dtype == 'O':
+        df_realtor['Sold Date'] = pd.to_datetime(df_realtor['Sold Date'], errors='coerce')
+        df_realtor.dropna(subset=['Sold Date'], inplace=True)
+        df_realtor['Sold Date'] = df_realtor['Sold Date'].dt.strftime('%m/%d/%Y')
+    time.sleep(5)
  
-    # Fetch school data only once
+    # Fetch school data 
     first_batch = fetch_properties(
         zip_code, home_type, 1, status_type, 0, max_price)
     schools_data = first_batch.get('schools', {}).get(
         'schools', []) if first_batch else []
     df_schools = pd.DataFrame(schools_data)
-
-    # Process school data
     columns_to_remove_schools = [ 
         "attendance_zones", "is_charter", "school_id", "location"]
     df_schools.drop(columns=columns_to_remove_schools,
                     inplace=True, errors='ignore')
-
     new_order_schools = ['name', 'gs_rating', 'is_elementary',
                          'is_middle', 'is_high', 'is_public', 'is_private', 'link']
     new_name_shcools = ['School Name', 'Rating', 'Elementary School?',
@@ -202,25 +244,56 @@ def fetch_and_export_data(zip_code=None, max_price=None, home_type=None, status_
     df_schools = df_schools[new_order_schools]
     df_schools.rename(columns=dict(zip(new_order_schools, new_name_shcools)), inplace=True)
     print("School data fetched!")
+    time.sleep(5)
 
-    # Determine the OS and set the file path
+    # os file path
     os_type = platform.system()
     desktop_path = os.path.join(os.path.join(os.environ['USERPROFILE']), 'Desktop') if os_type == 'Windows' else os.path.join(
         os.path.join(os.path.expanduser('~')), 'Desktop')
-    file_path = os.path.join(desktop_path, f"{zip_code}_{status_type}.xlsx")
+    file_path = os.path.join(desktop_path, f"{zip_code}_{status_type}_{home_type}.xlsx")
 
-    # Create a Pandas Excel writer using XlsxWriter as the engine
+    # XlsxWriter as the engine
     writer = pd.ExcelWriter(file_path, engine='xlsxwriter')
+    df_combined_old = pd.concat([df_props, df_realtor]).reset_index(drop=True)
 
-    # Write each DataFrame to a different worksheet
-    df_props.to_excel(writer, sheet_name='Zillow Properties', index=False)
+    # drop duplicate
+    df_combined = df_combined_old.drop_duplicates(subset='Address', keep='first', inplace=True)
+    new_combined_order = ['Sold Date', 'Address', 'Sold Price', 
+                          'bedrooms', 'bathrooms', 'Living Area', 
+                          'Property Type', 'Website']
+    df_combined = df_combined_old[new_combined_order].copy()
+
+    # format date
+    df_combined['Sold Date'] = pd.to_datetime(df_combined['Sold Date'])
+    df_combined = df_combined.sort_values(by='Sold Date', ascending=False)
+    df_combined['Sold Date'] = df_combined['Sold Date'].dt.strftime('%m/%d/%Y')
+
+    # format numeric number 
+    df_combined['Sold Price'] = pd.to_numeric(df_combined['Sold Price'], errors='coerce')
+    df_combined['Sold Price'].ffill(inplace=True)
+    df_combined['Sold Price'] = df_combined['Sold Price'].astype(int)
+
+    # handle NaN value for 'bedrooms' and 'bathrooms'
+    df_combined['bedrooms'] = pd.to_numeric(df_combined['bedrooms'], errors='coerce')
+    df_combined['bathrooms'] = pd.to_numeric(df_combined['bathrooms'], errors='coerce')
+    median_bedrooms = df_combined['bedrooms'].median()
+    median_bathrooms = df_combined['bathrooms'].median()
+    df_combined['bedrooms'].fillna(median_bedrooms, inplace=True)
+    df_combined['bathrooms'].fillna(median_bathrooms, inplace=True)
+
+    # handle NaN value for 'living area'
+    df_combined['Living Area'] = pd.to_numeric(df_combined['Living Area'], errors='coerce')
+    median_area = df_combined['Living Area'].median()
+    df_combined['Living Area'].fillna(median_area, inplace=True)
+
+    # handle NaN value for 'Property Type'
+    df_combined['Property Type'] = home_type
+
+    # export to excel 
+    df_combined.to_excel(writer, sheet_name='Combined Properties', index=False)
     df_schools.to_excel(writer, sheet_name='Schools', index=False)
-    df_realtor.to_excel(writer, sheet_name='Realtor Properties', index=False)
-
     writer.close()
-
-    # Close the Pandas Excel writer and output the Excel file
-    print(f"Data exported successfully to {file_path}")
+    print(f"Data exported successfully to {file_path} ... Program End")
 
 def main():
     parser = argparse.ArgumentParser(
