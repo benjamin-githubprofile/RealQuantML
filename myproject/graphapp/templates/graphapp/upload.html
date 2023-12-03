@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>AIO Real Estate Investor</title>
+    <style>
+        body {
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            font-family: 'Arial', sans-serif;
+            background-color: #f3f4f6;  
+            color: #333; 
+        }
+        .container {
+            background-color: white;
+            padding: 40px;
+            border-radius: 10px;
+            box-shadow: 0 4px 8px rgba(0,0,0,0.1);  
+            max-width: 400px;
+            width: 100%;
+        }
+        .title {
+            font-size: 2.5em;
+            font-weight: bold;
+            color: #2a9d8f;
+            margin-bottom: 20px;
+        }
+        h2 {
+            color: #264653; 
+            margin-bottom: 15px;
+        }
+        form {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        input[type='file'] {
+            margin-bottom: 20px;
+        }
+        button {
+            background-color: #e76f51; 
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #f4a261;
+        }
+        h5 {
+            margin-top: 20px;
+            color: #6d6875; 
+            font-size: 0.9em;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="title">AIO Real Estate Investor</div>
+        <h2>Upload an Excel file</h2>
+        <form method="post" enctype="multipart/form-data">
+            {% csrf_token %}
+            {{ form.as_p }}
+            <button type="submit">Upload file</button>
+        </form>
+        <h5>(Generated File Required)</h5>
+    </div>
+</body>
+</html>
